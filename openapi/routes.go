@@ -428,6 +428,124 @@ func AttestRoutes() []Route {
 	}
 }
 
+// AnalyticsRoutes returns OpenAPI routes for the analytics package (admin endpoints).
+func AnalyticsRoutes() []Route {
+	return []Route{
+		{
+			Method: "GET", Path: "/admin/api/analytics/dau",
+			Summary: "Daily active users time series", Tags: []string{"analytics"}, Auth: false,
+			Parameters: []Parameter{
+				{Name: "days", In: "query", Description: "Number of days to look back", Schema: Schema{Type: "integer", Default: 30}},
+			},
+			Response: &Response{Status: 200, Description: "DAU time series", Schema: &Schema{
+				Type: "object", Properties: map[string]Schema{
+					"dau": Arr(Ref("DAURow")),
+				},
+			}},
+		},
+		{
+			Method: "GET", Path: "/admin/api/analytics/events",
+			Summary: "Event counts grouped by event name", Tags: []string{"analytics"}, Auth: false,
+			Parameters: []Parameter{
+				{Name: "days", In: "query", Description: "Number of days to look back", Schema: Schema{Type: "integer", Default: 30}},
+				{Name: "event", In: "query", Description: "Optional event name filter", Schema: Str("")},
+			},
+			Response: &Response{Status: 200, Description: "Event counts", Schema: &Schema{
+				Type: "object", Properties: map[string]Schema{
+					"events": Arr(Ref("EventRow")),
+				},
+			}},
+		},
+		{
+			Method: "GET", Path: "/admin/api/analytics/mrr",
+			Summary: "Subscription and revenue summary", Tags: []string{"analytics"}, Auth: false,
+			Response: &Response{Status: 200, Description: "MRR breakdown", Schema: &Schema{
+				Type: "object", Properties: map[string]Schema{
+					"breakdown":    Arr(Ref("SubStats")),
+					"active_total": Int("Total active + trial subscriptions"),
+					"new_30d":      Int("New subscriptions in last 30 days"),
+					"churned_30d":  Int("Churned subscriptions in last 30 days"),
+				},
+			}},
+		},
+		{
+			Method: "GET", Path: "/admin/api/analytics/summary",
+			Summary: "Overview stats (DAU, MAU, total users, active subs)", Tags: []string{"analytics"}, Auth: false,
+			Response: &Response{Status: 200, Description: "Summary stats", Schema: &Schema{
+				Type: "object", Properties: map[string]Schema{
+					"dau_today":   Int("Daily active users today"),
+					"mau":         Int("Monthly active users"),
+					"total_users": Int("Total registered users"),
+					"active_subs": Int("Active subscriptions"),
+				},
+			}},
+		},
+	}
+}
+
+// AnalyticsSchemas returns OpenAPI schemas for the analytics package.
+func AnalyticsSchemas() []ComponentSchema {
+	return []ComponentSchema{
+		{"DAURow", Obj(map[string]Schema{
+			"date": StrFmt("Date in YYYY-MM-DD format", "date"),
+			"dau":  Int("Daily active user count"),
+		})},
+		{"EventRow", Obj(map[string]Schema{
+			"date":         StrFmt("", "date"),
+			"event":        Str("Event name"),
+			"count":        Int("Total event count"),
+			"unique_users": Int("Unique users who triggered this event"),
+		})},
+		{"SubStats", Obj(map[string]Schema{
+			"status": Str("Subscription status"),
+			"count":  Int("Number of subscriptions with this status"),
+		})},
+	}
+}
+
+// LifecycleRoutes returns OpenAPI routes for the lifecycle package.
+func LifecycleRoutes() []Route {
+	return []Route{
+		{
+			Method: "GET", Path: "/api/v1/user/lifecycle",
+			Summary: "Get user lifecycle stage and engagement score", Tags: []string{"lifecycle"}, Auth: true,
+			Response: &Response{Status: 200, Description: "Lifecycle data", Schema: &Schema{Ref: "EngagementScore"}},
+		},
+		{
+			Method: "POST", Path: "/api/v1/user/lifecycle/ack",
+			Summary: "Acknowledge a lifecycle prompt (shown/accepted/dismissed)", Tags: []string{"lifecycle"}, Auth: true,
+			Request: &RequestBody{Required: true, Schema: Obj(map[string]Schema{
+				"prompt_type": StrEnum("Prompt type", "review", "paywall", "winback", "milestone"),
+				"action":      StrEnum("User action", "shown", "accepted", "dismissed"),
+			}, "prompt_type", "action")},
+			Response: &Response{Status: 200, Description: "Acknowledged"},
+		},
+	}
+}
+
+// LifecycleSchemas returns OpenAPI schemas for the lifecycle package.
+func LifecycleSchemas() []ComponentSchema {
+	return []ComponentSchema{
+		{"EngagementScore", Obj(map[string]Schema{
+			"user_id":           Str(""),
+			"stage":             StrEnum("Lifecycle stage", "new", "activated", "engaged", "monetized", "loyal", "at_risk", "dormant", "churned"),
+			"score":             IntRange("Engagement score", 0, 100),
+			"days_since_active": Int(""),
+			"total_sessions":    Int(""),
+			"aha_reached":       Bool(""),
+			"is_pro":            Bool(""),
+			"created_days_ago":  Int(""),
+			"prompt":            Ref("LifecyclePrompt"),
+		})},
+		{"LifecyclePrompt", Obj(map[string]Schema{
+			"type":   StrEnum("", "review", "paywall", "winback", "milestone"),
+			"title":  Str(""),
+			"body":   Str(""),
+			"reason": Str(""),
+		})},
+	}
+}
+
 // AllRoutes returns all donkeygo routes combined.
 func AllRoutes() []Route {
 	var routes []Route
@@ -438,6 +556,8 @@ func AllRoutes() []Route {
 	routes = append(routes, SyncRoutes()...)
 	routes = append(routes, PaywallRoutes()...)
 	routes = append(routes, AttestRoutes()...)
+	routes = append(routes, AnalyticsRoutes()...)
+	routes = append(routes, LifecycleRoutes()...)
 	return routes
 }
 
@@ -450,5 +570,7 @@ func AllSchemas() []ComponentSchema {
 	schemas = append(schemas, ChatSchemas()...)
 	schemas = append(schemas, SyncSchemas()...)
 	schemas = append(schemas, PaywallSchemas()...)
+	schemas = append(schemas, AnalyticsSchemas()...)
+	schemas = append(schemas, LifecycleSchemas()...)
 	return schemas
 }

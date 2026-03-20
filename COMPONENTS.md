@@ -394,6 +394,173 @@ func HandleUpdateConfig(store *Store) http.HandlerFunc
 
 ---
 
+## analytics
+
+Admin analytics dashboard handlers — DAU, MAU, MRR, event counts, summary.
+
+### DB Interface
+
+```go
+type AnalyticsDB interface {
+    DAUTimeSeries(since time.Time) ([]DAURow, error)
+    EventCounts(since time.Time, event string) ([]EventRow, error)
+    SubscriptionBreakdown() ([]SubStats, error)
+    NewSubscriptions30d() (int, error)
+    ChurnedSubscriptions30d() (int, error)
+    DAUToday() (int, error)
+    MAU() (int, error)
+    TotalUsers() (int, error)
+    ActiveSubscriptions() (int, error)
+}
+```
+
+### Types
+
+```go
+type DAURow struct { Date string; DAU int }
+type EventRow struct { Date, Event string; Count, UniqueUsers int }
+type SubStats struct { Status string; Count int }
+type Config struct { AppOpenEvent string }  // default "app_open"
+```
+
+### Functions
+
+```go
+func New(cfg Config, db AnalyticsDB) *Service
+func (s *Service) HandleDAU(w, r)       // GET /admin/api/analytics/dau?days=30
+func (s *Service) HandleEvents(w, r)    // GET /admin/api/analytics/events?days=30&event=tap
+func (s *Service) HandleMRR(w, r)       // GET /admin/api/analytics/mrr
+func (s *Service) HandleSummary(w, r)   // GET /admin/api/analytics/summary
+```
+
+---
+
+## lifecycle
+
+User lifecycle engine — stages, engagement scoring, aha moments, prompt decisions.
+
+### DB Interface
+
+```go
+type LifecycleDB interface {
+    UserCreatedAndLastActive(userID string) (createdAt, lastActiveAt time.Time, err error)
+    CountSessions(userID string) (int, error)
+    CountRecentSessions(userID string, since time.Time) (int, error)
+    CountDistinctEventDays(userID, eventName string, since time.Time) (int, error)
+    IsProUser(userID string) (bool, error)
+    LastPrompt(userID string) (promptType string, promptAt time.Time, err error)
+    CountPrompts(userID, promptType string, since time.Time) (int, error)
+    RecordPrompt(userID, event, metadata string) error
+    EnabledDeviceTokens(userID string) ([]string, error)
+}
+```
+
+### Types
+
+```go
+type LifecycleStage string  // "new", "activated", "engaged", "monetized", "loyal", "at_risk", "dormant", "churned"
+
+type AhaMomentRule struct { Name, Description, EventName string; Threshold, WindowDays int }
+type EngagementScore struct {
+    UserID string; Stage LifecycleStage; Score int; DaysSinceActive, TotalSessions int
+    AhaReached, IsPro bool; CreatedDaysAgo int; ShouldPrompt *LifecyclePrompt
+}
+type LifecyclePrompt struct { Type, Title, Body, Reason string }
+
+type Config struct {
+    AhaMomentRules   []AhaMomentRule
+    PromptCooldownDays int  // default 3
+}
+```
+
+### Functions
+
+```go
+func New(cfg Config, db LifecycleDB, push push.Provider) *Service
+func (s *Service) EvaluateUser(userID string) (*EngagementScore, error)
+func (s *Service) DeterminePrompt(score *EngagementScore) *LifecyclePrompt
+func (s *Service) EvaluateNotifications(userIDs []string)
+func (s *Service) HandleGetLifecycle(w, r)       // GET /api/v1/user/lifecycle
+func (s *Service) HandleAckLifecyclePrompt(w, r) // POST /api/v1/user/lifecycle/ack
+```
+
+### Lifecycle Stages
+
+```
+NEW → ACTIVATED → ENGAGED → MONETIZED → LOYAL
+                                ↕
+                          AT_RISK → DORMANT → CHURNED
+```
+
+---
+
+## scheduler
+
+Pluggable background task scheduler. Run arbitrary tasks at configurable intervals.
+
+### Interface
+
+```go
+type Task interface {
+    Name() string
+    Run(ctx context.Context) error
+}
+```
+
+### Types
+
+```go
+type FuncTask struct { /* ... */ }
+
+type TaskConfig struct {
+    Task     Task
+    Every    int  // run every N ticks (1 = every tick, 96 = daily at 15min intervals)
+    RunFirst bool // run immediately on first tick
+}
+
+type Config struct {
+    Interval time.Duration // tick interval (default 15 min)
+    Tasks    []TaskConfig
+    Logger   *log.Logger   // optional custom logger
+}
+
+type Scheduler struct { /* ... */ }
+```
+
+### Functions
+
+```go
+func New(cfg Config) *Scheduler
+func NewFuncTask(name string, fn func(ctx context.Context) error) *FuncTask
+func (s *Scheduler) Start()
+func (s *Scheduler) Stop()
+func (s *Scheduler) AddTask(tc TaskConfig)  // thread-safe, call after Start
+func (s *Scheduler) TickCount() int
+```
+
+### Usage
+
+```go
+s := scheduler.New(scheduler.Config{
+    Interval: 15 * time.Minute,
+    Tasks: []scheduler.TaskConfig{
+        {
+            Task:     scheduler.NewFuncTask("cleanup", func(ctx context.Context) error { return cleanExpired(ctx) }),
+            Every:    1,   // every tick
+        },
+        {
+            Task:     scheduler.NewFuncTask("daily-report", func(ctx context.Context) error { return sendReport(ctx) }),
+            Every:    96,  // every 96 ticks = daily at 15min intervals
+            RunFirst: true,
+        },
+    },
+})
+s.Start()
+defer s.Stop()
+```
+
+---
+
 ## attest
 
 App Attest challenge/verify for device verification.
