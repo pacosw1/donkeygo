@@ -442,6 +442,142 @@ func HandleAdminLogs(buf *LogBuffer) http.HandlerFunc
 
 ---
 
+## openapi
+
+Programmatic OpenAPI 3.1 spec generation from donkeygo route definitions. Each package exports Routes() and Schemas() — this package composes them into a versioned spec for Swift SDK generation.
+
+### Types
+
+```go
+type Route struct {
+    Method, Path, Summary, Description string
+    Tags       []string
+    Auth       bool
+    Request    *RequestBody
+    Response   *Response
+    Parameters []Parameter
+}
+
+type Schema struct {
+    Type       string
+    Ref        string
+    Properties map[string]Schema
+    Required   []string
+    Items      *Schema
+    Format     string
+    Enum       []string
+    Nullable   bool
+    Default    any
+    Minimum    *int
+    Maximum    *int
+}
+
+type RequestBody struct {
+    Required    bool
+    ContentType string
+    Schema      Schema
+}
+
+type Response struct {
+    Status      int
+    Description string
+    Schema      *Schema
+}
+
+type Parameter struct {
+    Name, In, Description string
+    Required              bool
+    Schema                Schema
+}
+
+type SpecConfig struct {
+    Title, Description, Version string
+    Servers                     []Server
+    ExtraSchemas                []ComponentSchema
+    ExtraRoutes                 []Route
+}
+
+type ComponentSchema struct {
+    Name   string
+    Schema Schema
+}
+```
+
+### Functions
+
+```go
+// Schema helpers
+func Str(desc string) Schema
+func StrFmt(desc, format string) Schema
+func Int(desc string) Schema
+func IntRange(desc string, min, max int) Schema
+func Bool(desc string) Schema
+func Ref(name string) Schema
+func Arr(items Schema) Schema
+func Obj(props map[string]Schema, required ...string) Schema
+func StrEnum(desc string, values ...string) Schema
+func NullStr(desc string) Schema
+
+// Per-package route/schema exports
+func AuthRoutes() []Route
+func AuthSchemas() []ComponentSchema
+func NotifyRoutes() []Route
+func NotifySchemas() []ComponentSchema
+func EngageRoutes() []Route
+func EngageSchemas() []ComponentSchema
+func ChatRoutes() []Route
+func ChatSchemas() []ComponentSchema
+func SyncRoutes() []Route
+func SyncSchemas() []ComponentSchema
+func PaywallRoutes() []Route
+func PaywallSchemas() []ComponentSchema
+func AttestRoutes() []Route
+
+// Compose all packages
+func AllRoutes() []Route
+func AllSchemas() []ComponentSchema
+
+// Generate spec
+func Generate(cfg SpecConfig, routes []Route, schemas []ComponentSchema) map[string]any
+func GenerateYAML(cfg SpecConfig, routes []Route, schemas []ComponentSchema) string
+```
+
+### CLI Usage
+
+```bash
+go run github.com/pacosw1/donkeygo/cmd/openapi \
+  --title "My App API" \
+  --version 1 \
+  --prod-url "https://api.myapp.com" \
+  > openapi.yaml
+```
+
+### Adding App-Specific Routes
+
+```go
+appRoutes := openapi.AllRoutes()
+appRoutes = append(appRoutes, openapi.Route{
+    Method: "GET", Path: "/api/v1/tasks",
+    Summary: "List user tasks", Tags: []string{"tasks"}, Auth: true,
+    Response: &openapi.Response{Status: 200, Description: "Tasks", Schema: &openapi.Schema{
+        Type: "array", Items: &openapi.Schema{Ref: "Task"},
+    }},
+})
+
+appSchemas := openapi.AllSchemas()
+appSchemas = append(appSchemas, openapi.ComponentSchema{
+    "Task", openapi.Obj(map[string]openapi.Schema{
+        "id":        openapi.Str(""),
+        "title":     openapi.Str(""),
+        "completed": openapi.Bool(""),
+    }),
+})
+
+yaml := openapi.GenerateYAML(cfg, appRoutes, appSchemas)
+```
+
+---
+
 ## App Wiring Example
 
 ```go
