@@ -292,7 +292,7 @@ func (s *Service) HandleNotificationOpened(w, r)
 
 ## sync
 
-Multi-device delta sync with tombstones and batch operations.
+Multi-device delta sync with version-based conflict detection, idempotent batch writes, and push-triggered propagation.
 
 ### DB Interface
 
@@ -308,17 +308,41 @@ type SyncDB interface {
 
 ```go
 type EntityHandler interface {
-    ChangedSince(userID string, since time.Time) (map[string]any, error)
-    BatchUpsert(userID string, items []map[string]any) ([]BatchResponseItem, []BatchError)
+    ChangedSince(userID string, since time.Time, excludeDeviceID string) (map[string]any, error)
+    BatchUpsert(userID, deviceID string, items []BatchItem) ([]BatchResponseItem, []BatchError)
     Delete(userID, entityType, entityID string) error
+}
+```
+
+### Types
+
+```go
+const HeaderDeviceID       = "X-Device-ID"
+const HeaderIdempotencyKey = "X-Idempotency-Key"
+
+type BatchItem struct { ClientID, EntityType, EntityID string; Version int; Fields map[string]any }
+type BatchResponseItem struct { ClientID, ServerID string; Version int }
+type BatchError struct { ClientID, Error string; IsConflict bool; ServerVersion int }
+type BatchResponse struct { Items []BatchResponseItem; Errors []BatchError; SyncedAt time.Time }
+
+type DeviceTokenStore interface {
+    EnabledTokensForUser(userID string) ([]DeviceInfo, error)
+}
+type DeviceInfo struct { DeviceID, Token string }
+
+type Config struct {
+    Push           push.Provider    // optional silent sync notifications
+    DeviceTokens   DeviceTokenStore // required when Push is set
+    IdempotencyTTL time.Duration    // default 24h
 }
 ```
 
 ### Functions
 
 ```go
-func New(db SyncDB, handler EntityHandler) *Service
+func New(db SyncDB, handler EntityHandler, cfg ...Config) *Service
 func Migrations() []string
+func (s *Service) Close()
 func (s *Service) HandleSyncChanges(w, r)   // GET /api/v1/sync/changes?since=...
 func (s *Service) HandleSyncBatch(w, r)     // POST /api/v1/sync/batch
 func (s *Service) HandleSyncDelete(w, r)    // DELETE /api/v1/sync/{entity_type}/{id}
@@ -745,6 +769,56 @@ yaml := openapi.GenerateYAML(cfg, appRoutes, appSchemas)
 
 ---
 
+## receipt
+
+App Store Server API v2 receipt verification with JWS x5c chain validation against Apple Root CA - G3.
+
+### DB Interface
+
+```go
+type ReceiptDB interface {
+    UpsertSubscription(userID, productID, originalTransactionID, status string, expiresAt *time.Time, priceCents int, currencyCode string) error
+    UserIDByTransactionID(originalTransactionID string) (string, error)
+    StoreTransaction(t *VerifiedTransaction) error
+}
+```
+
+### Types
+
+```go
+type TransactionInfo struct {
+    TransactionID, OriginalTransactionID, BundleID, ProductID string
+    PurchaseDate, ExpiresDate, OriginalPurchaseDate           int64
+    Type, InAppOwnershipType, Environment, Currency, Storefront string
+    Price, OfferType int; RevocationDate int64; AppAccountToken string
+}
+
+type NotificationPayload struct { NotificationType, Subtype string; Data NotificationData; Version string; SignedDate int64 }
+type NotificationData struct { SignedTransactionInfo, SignedRenewalInfo, Environment, BundleID, BundleVersion string; AppAppleID int64 }
+type VerifiedTransaction struct {
+    TransactionID, OriginalTransactionID, UserID, ProductID, Status string
+    PurchaseDate time.Time; ExpiresDate *time.Time
+    Environment, CurrencyCode, NotificationType string; PriceCents int
+}
+type VerifyResponse struct { Verified bool; Status, ProductID, TransactionID string; ExpiresAt *time.Time }
+
+type Config struct {
+    BundleID    string // reject transactions with a different bundle ID
+    Environment string // "Production" or "Sandbox"; empty = accept both
+}
+```
+
+### Functions
+
+```go
+func New(db ReceiptDB, cfg Config) *Service
+func Migrations() []string
+func (s *Service) HandleVerifyReceipt(w, r)  // POST /api/v1/receipt/verify  (auth required)
+func (s *Service) HandleWebhook(w, r)        // POST /api/v1/receipt/webhook (no auth — Apple calls directly)
+```
+
+---
+
 ## App Wiring Example
 
 ```go
@@ -762,6 +836,7 @@ import (
     "github.com/pacosw1/donkeygo/notify"
     "github.com/pacosw1/donkeygo/paywall"
     "github.com/pacosw1/donkeygo/push"
+    "github.com/pacosw1/donkeygo/receipt"
     "github.com/pacosw1/donkeygo/sync"
 )
 
@@ -774,7 +849,9 @@ func main() {
     engageSvc := engage.New(engage.Config{}, myDB)
     notifySvc := notify.New(myDB, pushSvc)
     chatSvc := chat.New(myDB, pushSvc, chat.Config{ParseToken: authSvc.ParseSessionToken})
-    syncSvc := sync.New(myDB, &MyEntityHandler{})
+    receiptSvc := receipt.New(myDB, receipt.Config{BundleID: "com.app", Environment: "Production"})
+    syncSvc := sync.New(myDB, &MyEntityHandler{}, sync.Config{Push: pushSvc, DeviceTokens: myDB})
+    defer syncSvc.Close()
     logBuf := logbuf.New(5000)
     logbuf.SetupLogCapture(logBuf)
     paywallStore := paywall.NewStore(map[string]*paywall.Config{"en": {Headline: "Unlock"}})
@@ -792,6 +869,8 @@ func main() {
     mux.HandleFunc("PUT /api/v1/subscription", requireAuth(engageSvc.HandleUpdateSubscription))
     mux.HandleFunc("POST /api/v1/notifications/devices", requireAuth(notifySvc.HandleRegisterDevice))
     mux.HandleFunc("GET /api/v1/sync/changes", requireAuth(syncSvc.HandleSyncChanges))
+    mux.HandleFunc("POST /api/v1/receipt/verify", requireAuth(receiptSvc.HandleVerifyReceipt))
+    mux.HandleFunc("POST /api/v1/receipt/webhook", receiptSvc.HandleWebhook)
     mux.HandleFunc("GET /api/v1/chat", requireAuth(chatSvc.HandleGetChat))
     mux.HandleFunc("GET /api/v1/chat/ws", chatSvc.HandleUserWS)
     mux.HandleFunc("GET /api/v1/paywall/config", paywall.HandleGetConfig(paywallStore))

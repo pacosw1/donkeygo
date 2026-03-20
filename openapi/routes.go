@@ -323,21 +323,21 @@ func SyncRoutes() []Route {
 			Summary: "Get changes since timestamp (delta sync)", Tags: []string{"sync"}, Auth: true,
 			Parameters: []Parameter{
 				{Name: "since", In: "query", Description: "ISO8601 timestamp. Omit for full sync.", Schema: StrFmt("", "date-time")},
+				{Name: "X-Device-ID", In: "header", Description: "Unique device identifier. Changes from this device are excluded from the response."},
 			},
 			Response: &Response{Status: 200, Description: "Sync changes", Schema: &Schema{Ref: "SyncChanges"}},
 		},
 		{
 			Method: "POST", Path: "/api/v1/sync/batch",
-			Summary: "Batch upsert entities", Tags: []string{"sync"}, Auth: true,
+			Summary: "Batch upsert entities with version-based conflict detection", Tags: []string{"sync"}, Auth: true,
+			Parameters: []Parameter{
+				{Name: "X-Device-ID", In: "header", Description: "Unique device identifier for change tracking."},
+				{Name: "X-Idempotency-Key", In: "header", Description: "UUID for request deduplication. Retried requests with the same key return the cached result."},
+			},
 			Request: &RequestBody{Required: true, Schema: Obj(map[string]Schema{
-				"items": Arr(Schema{Type: "object", Description: "Entity with client_id, entity_type, and type-specific fields"}),
+				"items": Arr(Ref("BatchItem")),
 			}, "items")},
-			Response: &Response{Status: 200, Description: "Batch results", Schema: &Schema{
-				Type: "object", Properties: map[string]Schema{
-					"items":  Arr(Obj(map[string]Schema{"client_id": Str(""), "server_id": Str("")})),
-					"errors": Arr(Obj(map[string]Schema{"client_id": Str(""), "error": Str("")})),
-				},
-			}},
+			Response: &Response{Status: 200, Description: "Batch results", Schema: &Schema{Ref: "BatchResponse"}},
 		},
 		{
 			Method: "DELETE", Path: "/api/v1/sync/{entity_type}/{id}",
@@ -345,6 +345,7 @@ func SyncRoutes() []Route {
 			Parameters: []Parameter{
 				{Name: "entity_type", In: "path", Required: true, Schema: Str("")},
 				{Name: "id", In: "path", Required: true, Schema: Str("")},
+				{Name: "X-Device-ID", In: "header", Description: "Unique device identifier for push notification targeting."},
 			},
 			Response: &Response{Status: 200, Description: "Deleted"},
 		},
@@ -366,6 +367,29 @@ func SyncSchemas() []ComponentSchema {
 			"entity_type": Str(""),
 			"entity_id":   Str(""),
 			"deleted_at":  StrFmt("", "date-time"),
+		})},
+		{"BatchItem", Obj(map[string]Schema{
+			"client_id":   Str("Client-generated ID for correlation"),
+			"entity_type": Str("Entity type (e.g. habit, log)"),
+			"entity_id":   Str("Server entity ID (set for updates, empty for creates)"),
+			"version":     Int("Version for conflict detection (0 = create, >0 = expected server version)"),
+			"fields":      {Type: "object", Description: "Entity-specific fields"},
+		}, "client_id", "entity_type", "version", "fields")},
+		{"BatchResponseItem", Obj(map[string]Schema{
+			"client_id": Str("Echoed client ID"),
+			"server_id": Str("Server-assigned entity ID"),
+			"version":   Int("New server version after write"),
+		})},
+		{"BatchError", Obj(map[string]Schema{
+			"client_id":      Str("Echoed client ID"),
+			"error":          Str("Error message"),
+			"is_conflict":    Bool("True if the error is a version conflict"),
+			"server_version": Int("Current server version (set when is_conflict is true)"),
+		})},
+		{"BatchResponse", Obj(map[string]Schema{
+			"items":     Arr(Ref("BatchResponseItem")),
+			"errors":    Arr(Ref("BatchError")),
+			"synced_at": StrFmt("Server timestamp of the batch", "date-time"),
 		})},
 	}
 }
@@ -546,6 +570,43 @@ func LifecycleSchemas() []ComponentSchema {
 	}
 }
 
+// ReceiptRoutes returns OpenAPI routes for the receipt package.
+func ReceiptRoutes() []Route {
+	return []Route{
+		{
+			Method: "POST", Path: "/api/v1/receipt/verify",
+			Summary: "Verify a StoreKit 2 signed transaction", Tags: []string{"receipt"}, Auth: true,
+			Request: &RequestBody{Required: true, Schema: Obj(map[string]Schema{
+				"transaction": Str("JWS-signed transaction from StoreKit 2"),
+			}, "transaction")},
+			Response: &Response{Status: 200, Description: "Verification result", Schema: &Schema{Ref: "VerifyResponse"}},
+		},
+		{
+			Method: "POST", Path: "/api/v1/receipt/webhook",
+			Summary: "Apple App Store Server Notifications V2 webhook", Tags: []string{"receipt"}, Auth: false,
+			Request: &RequestBody{Required: true, Schema: Obj(map[string]Schema{
+				"signedPayload": Str("JWS-signed notification payload from Apple"),
+			}, "signedPayload")},
+			Response: &Response{Status: 200, Description: "Webhook processed", Schema: &Schema{
+				Type: "object", Properties: map[string]Schema{"status": Str("")},
+			}},
+		},
+	}
+}
+
+// ReceiptSchemas returns OpenAPI schemas for the receipt package.
+func ReceiptSchemas() []ComponentSchema {
+	return []ComponentSchema{
+		{"VerifyResponse", Obj(map[string]Schema{
+			"verified":       Bool("Whether the transaction was successfully verified"),
+			"status":         Str("Subscription status (active, expired, cancelled, trial)"),
+			"product_id":     Str("App Store product identifier"),
+			"transaction_id": Str("Apple transaction ID"),
+			"expires_at":     NullStrFmt("Subscription expiration date", "date-time"),
+		})},
+	}
+}
+
 // AllRoutes returns all donkeygo routes combined.
 func AllRoutes() []Route {
 	var routes []Route
@@ -558,6 +619,7 @@ func AllRoutes() []Route {
 	routes = append(routes, AttestRoutes()...)
 	routes = append(routes, AnalyticsRoutes()...)
 	routes = append(routes, LifecycleRoutes()...)
+	routes = append(routes, ReceiptRoutes()...)
 	return routes
 }
 
@@ -572,5 +634,6 @@ func AllSchemas() []ComponentSchema {
 	schemas = append(schemas, PaywallSchemas()...)
 	schemas = append(schemas, AnalyticsSchemas()...)
 	schemas = append(schemas, LifecycleSchemas()...)
+	schemas = append(schemas, ReceiptSchemas()...)
 	return schemas
 }
