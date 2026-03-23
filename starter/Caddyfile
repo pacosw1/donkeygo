@@ -1,0 +1,35 @@
+# Production API
+# Replace api.myapp.com with your domain
+api.myapp.com {
+	reverse_proxy app-prod:8080
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Sandbox API (for development/testing builds)
+# Replace sandbox.myapp.com with your domain
+sandbox.myapp.com {
+	reverse_proxy app-sandbox:8080
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,114 @@
+# DonkeyGo Starter — Docker Compose
+#
+# Replace all "myapp" references with your app name.
+# Set passwords in .env (never commit .env to git).
+#
+# Usage:
+#   docker compose up -d          # start all services
+#   docker compose logs -f app    # tail app logs
+#   docker compose down           # stop everything
+
+services:
+  # ── Production Database ──────────────────────────────────────────────────
+  db-prod:
+    image: postgres:16-alpine
+    container_name: myapp-db-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: myapp_prod
+      POSTGRES_USER: myapp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_PROD:-change_me_prod}
+    volumes:
+      - pg-prod:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U myapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Sandbox Database ─────────────────────────────────────────────────────
+  db-sandbox:
+    image: postgres:16-alpine
+    container_name: myapp-db-sandbox
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: myapp_sandbox
+      POSTGRES_USER: myapp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_SANDBOX:-change_me_sandbox}
+    volumes:
+      - pg-sandbox:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U myapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Production API ───────────────────────────────────────────────────────
+  app-prod:
+    build: .
+    container_name: myapp-api-prod
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgres://myapp:${POSTGRES_PASSWORD_PROD:-change_me_prod}@db-prod:5432/myapp_prod?sslmode=disable
+      - PORT=8080
+      - ENVIRONMENT=production
+    expose:
+      - "8080"
+    depends_on:
+      db-prod:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Sandbox API ──────────────────────────────────────────────────────────
+  app-sandbox:
+    build: .
+    container_name: myapp-api-sandbox
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgres://myapp:${POSTGRES_PASSWORD_SANDBOX:-change_me_sandbox}@db-sandbox:5432/myapp_sandbox?sslmode=disable
+      - PORT=8080
+      - ENVIRONMENT=development
+    expose:
+      - "8080"
+    depends_on:
+      db-sandbox:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Caddy Reverse Proxy (auto-TLS) ──────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: myapp-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app-prod:
+        condition: service_healthy
+      app-sandbox:
+        condition: service_healthy
+
+volumes:
+  pg-prod:
+  pg-sandbox:
+  caddy-data:
+  caddy-config:

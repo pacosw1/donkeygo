@@ -17,6 +17,8 @@ All three steps are required. The MCP index is how LLMs discover packages — if
 - Top-level directories are Go packages (auth, sync, push, chat, middleware, etc.)
 - `postgres/` — PostgreSQL implementations of all DB interfaces
 - `openapi/` — Route documentation
+- `admin/` — Pre-built admin panel (HTMX + html/template)
+- `starter/` — Deployment templates (Dockerfile, docker-compose, Caddyfile, CI/CD workflows)
 - `mcp/` — MCP server + SQLite FTS5 index for AI-assisted discovery
 - `COMPONENTS.md` — Package API catalog (source of truth for MCP index)
 

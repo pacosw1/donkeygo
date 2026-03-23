@@ -1246,3 +1246,51 @@ func main() {
     http.ListenAndServe(":8080", handler)
 }
 ```
+
+---
+
+## Deployment Starter Templates
+
+Copy-paste-ready deployment files in `starter/`. Replace `myapp` and domain placeholders with your values.
+
+### Files
+
+| File | Purpose |
+|---|---|
+| `starter/Dockerfile` | Multi-stage Go build → Alpine runtime, non-root user, health check |
+| `starter/docker-compose.yml` | App (prod + sandbox) + PostgreSQL + Caddy reverse proxy |
+| `starter/.env.example` | All env vars a donkeygo app needs |
+| `starter/Caddyfile` | Auto-TLS reverse proxy with security headers |
+| `starter/.github/workflows/ci.yml` | Go test + vet on self-hosted Mac runner with Postgres |
+| `starter/.github/workflows/deploy.yml` | rsync + SSH + docker-rollout zero-downtime deploy |
+
+### Architecture
+
+```
+Mac Runner (CI)                          VPS Server
+┌─────────────────┐    rsync + SSH      ┌──────────────────────────────┐
+│ go test ./...   │ ──────────────────▶ │ /opt/myapp/                  │
+│ go vet ./...    │                     │ ├── docker-compose.yml       │
+│ xcodebuild      │                     │ ├── Caddyfile                │
+│                  │                     │ ├── .env                     │
+│ Deploy job:      │                     │ └── (Go source)              │
+│   rsync code     │                     │                              │
+│   ssh deploy     │                     │ Docker:                      │
+└─────────────────┘                     │   caddy (80/443, auto-TLS)   │
+                                        │   app-prod (:8080)           │
+                                        │   app-sandbox (:8080)        │
+                                        │   db-prod (PostgreSQL 16)    │
+                                        │   db-sandbox (PostgreSQL 16) │
+                                        └──────────────────────────────┘
+```
+
+### Setup
+
+1. Copy `starter/` files into your project root
+2. Replace `myapp` with your app name in all files
+3. Replace domain placeholders in `Caddyfile`
+4. Copy `.env.example` to `.env` on your VPS, fill in real values
+5. Add `SSH_KEY` and `SERVER_HOST` as GitHub Secrets
+6. Set up a self-hosted Mac runner for CI
+7. Point your DNS to the VPS IP
+8. Push to main — CI runs, then auto-deploys

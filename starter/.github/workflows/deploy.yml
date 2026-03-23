@@ -1,0 +1,93 @@
+# DonkeyGo Starter — Deploy Pipeline
+#
+# Deploys to a VPS via SSH + Docker Compose with zero-downtime rolling updates.
+# Runs after CI passes on main branch.
+#
+# Required GitHub Secrets:
+#   SSH_KEY       — Private SSH key for the deploy user
+#   SERVER_HOST   — VPS IP address or hostname
+#
+# Server prerequisites:
+#   - Docker + Docker Compose installed
+#   - .env file at /opt/myapp/.env (copy from .env.example)
+#   - AuthKey.p8 at /opt/myapp/AuthKey.p8 (if using push notifications)
+#   - DNS pointing your domains to the server IP
+
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy Server
+    runs-on: [self-hosted, macos]
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Sync code to server
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          rsync -avz --delete \
+            --exclude='.env' \
+            --exclude='.env.production' \
+            --exclude='AuthKey.p8' \
+            --exclude='*.db' \
+            --exclude='*.db-*' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            ./ root@$SERVER_HOST:/opt/myapp/
+          rm -f ~/.ssh/deploy_key
+
+      - name: Deploy (zero-downtime rolling update)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /opt/myapp
+
+            export BUILD_VERSION="$(date +%Y.%m.%d)"
+            export BUILD_COMMIT="${GITHUB_SHA:0:7}"
+
+            # Build new images
+            docker compose build --no-cache app-prod app-sandbox
+
+            # Ensure databases and Caddy are running
+            docker compose up -d db-prod db-sandbox caddy
+
+            # Install docker-rollout if not present
+            if ! command -v docker-rollout &>/dev/null; then
+              echo "Installing docker-rollout..."
+              curl -fsSL https://raw.githubusercontent.com/wowu/docker-rollout/main/docker-rollout -o /usr/local/bin/docker-rollout
+              chmod +x /usr/local/bin/docker-rollout
+            fi
+
+            # Zero-downtime rolling update
+            echo "Rolling update (prod)..."
+            docker rollout app-prod -f docker-compose.yml 2>/dev/null || \
+              docker compose up -d --no-deps app-prod
+
+            echo "Rolling update (sandbox)..."
+            docker rollout app-sandbox -f docker-compose.yml 2>/dev/null || \
+              docker compose up -d --no-deps app-sandbox
+
+            # Verify health
+            sleep 5
+            curl -sf http://localhost:8080/health || echo "Warning: health check failed"
+            echo ""
+            echo "Deployed $BUILD_COMMIT at $(date)"
+
+            # Prune old images
+            docker image prune -f

@@ -1,0 +1,78 @@
+# DonkeyGo Starter — CI Pipeline
+#
+# Runs on a self-hosted Mac runner (required for iOS builds).
+# Set up your runner: https://docs.github.com/en/actions/hosting-your-own-runners
+#
+# Required GitHub Secrets:
+#   (none for CI — secrets only needed for deploy.yml)
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Server Tests (Go + PostgreSQL) ──────────────────────────
+  server-tests:
+    name: Server Tests
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Start PostgreSQL
+        run: |
+          docker rm -f myapp-test-db 2>/dev/null || true
+          docker run -d --name myapp-test-db \
+            -e POSTGRES_DB=myapp_test \
+            -e POSTGRES_USER=myapp \
+            -e POSTGRES_PASSWORD=myapp_test_pass \
+            -p 5433:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec myapp-test-db pg_isready -U myapp && break
+            sleep 1
+          done
+
+      - name: Run tests
+        env:
+          CGO_ENABLED: '0'
+          TEST_DATABASE_URL: postgres://myapp:myapp_test_pass@localhost:5433/myapp_test?sslmode=disable
+        run: go test ./... -v -count=1
+
+      - name: Cleanup PostgreSQL
+        if: always()
+        run: docker rm -f myapp-test-db 2>/dev/null || true
+
+  # ── iOS Build (self-hosted Mac with Xcode) ───────────────────
+  # Uncomment when you have an iOS project
+  # ios:
+  #   name: iOS Build
+  #   runs-on: [self-hosted, macos, xcode]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 1
+  #
+  #     - name: Build (Release)
+  #       run: |
+  #         xcodebuild build \
+  #           -project YourApp.xcodeproj \
+  #           -scheme YourApp \
+  #           -destination 'generic/platform=iOS Simulator' \
+  #           -configuration Release \
+  #           CODE_SIGNING_ALLOWED=NO
