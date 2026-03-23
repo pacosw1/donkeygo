@@ -819,6 +819,60 @@ func (s *Service) HandleWebhook(w, r)        // POST /api/v1/receipt/webhook (no
 
 ---
 
+## postgres
+
+PostgreSQL implementation of all donkeygo DB interfaces. Single `DB` struct, uses `database/sql`, no driver dependency.
+
+### Types
+
+```go
+type DB struct { /* wraps *sql.DB */ }
+
+// Adapters resolve EnabledDeviceTokens return type conflicts between
+// notify.NotifyDB ([]*DeviceToken) and chat.ChatDB / lifecycle.LifecycleDB ([]string).
+type ChatDBAdapter struct { *DB }
+type LifecycleDBAdapter struct { *DB }
+```
+
+### Interfaces Implemented
+
+| Type                  | Interface                |
+|-----------------------|--------------------------|
+| `*DB`                 | `auth.AuthDB`            |
+| `*DB`                 | `attest.AttestDB`        |
+| `*DB`                 | `engage.EngageDB`        |
+| `*DB`                 | `notify.NotifyDB`        |
+| `*DB`                 | `sync.SyncDB`            |
+| `*DB`                 | `sync.DeviceTokenStore`  |
+| `*DB`                 | `receipt.ReceiptDB`      |
+| `*DB`                 | `analytics.AnalyticsDB`  |
+| `*ChatDBAdapter`      | `chat.ChatDB`            |
+| `*LifecycleDBAdapter` | `lifecycle.LifecycleDB`  |
+
+### Functions
+
+```go
+func New(db *sql.DB) *DB
+func (d *DB) SQL() *sql.DB  // access underlying *sql.DB
+```
+
+### Usage
+
+```go
+import _ "github.com/lib/pq"
+
+db, _ := sql.Open("postgres", connStr)
+store := postgres.New(db)
+
+authSvc    := auth.New(authCfg, store)
+engageSvc  := engage.New(engage.Config{}, store)
+notifySvc  := notify.New(store, pushSvc)
+chatSvc    := chat.New(&postgres.ChatDBAdapter{store}, pushSvc, chatCfg)
+lifecycleSvc := lifecycle.New(lcCfg, &postgres.LifecycleDBAdapter{store}, pushSvc)
+```
+
+---
+
 ## App Wiring Example
 
 ```go
@@ -828,6 +882,8 @@ import (
     "database/sql"
     "net/http"
 
+    _ "github.com/lib/pq"
+
     "github.com/pacosw1/donkeygo/auth"
     "github.com/pacosw1/donkeygo/chat"
     "github.com/pacosw1/donkeygo/engage"
@@ -835,6 +891,7 @@ import (
     "github.com/pacosw1/donkeygo/middleware"
     "github.com/pacosw1/donkeygo/notify"
     "github.com/pacosw1/donkeygo/paywall"
+    "github.com/pacosw1/donkeygo/postgres"
     "github.com/pacosw1/donkeygo/push"
     "github.com/pacosw1/donkeygo/receipt"
     "github.com/pacosw1/donkeygo/sync"
@@ -842,15 +899,16 @@ import (
 
 func main() {
     db := openDB()
+    store := postgres.New(db)
 
     // Services
-    authSvc := auth.New(auth.Config{JWTSecret: "secret", AppleBundleID: "com.app"}, myDB)
+    authSvc := auth.New(auth.Config{JWTSecret: "secret", AppleBundleID: "com.app"}, store)
     pushSvc, _ := push.NewProvider(push.Config{KeyPath: "key.p8", KeyID: "ABC", TeamID: "XYZ", Topic: "com.app"})
-    engageSvc := engage.New(engage.Config{}, myDB)
-    notifySvc := notify.New(myDB, pushSvc)
-    chatSvc := chat.New(myDB, pushSvc, chat.Config{ParseToken: authSvc.ParseSessionToken})
-    receiptSvc := receipt.New(myDB, receipt.Config{BundleID: "com.app", Environment: "Production"})
-    syncSvc := sync.New(myDB, &MyEntityHandler{}, sync.Config{Push: pushSvc, DeviceTokens: myDB})
+    engageSvc := engage.New(engage.Config{}, store)
+    notifySvc := notify.New(store, pushSvc)
+    chatSvc := chat.New(&postgres.ChatDBAdapter{store}, pushSvc, chat.Config{ParseToken: authSvc.ParseSessionToken})
+    receiptSvc := receipt.New(store, receipt.Config{BundleID: "com.app", Environment: "Production"})
+    syncSvc := sync.New(store, &MyEntityHandler{}, sync.Config{Push: pushSvc, DeviceTokens: store})
     defer syncSvc.Close()
     logBuf := logbuf.New(5000)
     logbuf.SetupLogCapture(logBuf)
