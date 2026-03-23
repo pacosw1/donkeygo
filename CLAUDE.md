@@ -22,6 +22,17 @@ All three steps are required. The MCP index is how LLMs discover packages — if
 - `mcp/` — MCP server + SQLite FTS5 index for AI-assisted discovery
 - `COMPONENTS.md` — Package API catalog (source of truth for MCP index)
 
+## Releasing a new version
+
+After pushing changes to main, tag and push a new semver release:
+
+1. Check commits since last tag: `git log --oneline $(git describe --tags --abbrev=0)..HEAD`
+2. Choose version bump: **patch** (bug fixes), **minor** (new features/packages), **major** (breaking changes)
+3. Tag: `git tag v0.X.Y`
+4. Push tag: `git push origin v0.X.Y`
+
+Go modules require the tag for `go get github.com/pacosw1/donkeygo@vX.Y.Z` to resolve. Without a tag, consumers can only use commit hashes.
+
 ## Conventions
 
 - Every package defines a DB interface (e.g. `AuthDB`, `SyncDB`) — no direct database dependency
