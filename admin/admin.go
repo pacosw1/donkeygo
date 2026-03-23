@@ -2,7 +2,6 @@ package admin
 
 import (
 	"embed"
-	"html/template"
 	"io/fs"
 	"net/http"
 	"sort"
@@ -10,11 +9,8 @@ import (
 	"time"
 )
 
-//go:embed templates/*.html templates/partials/*.html
-var templateFS embed.FS
-
-//go:embed static/*
-var staticFS embed.FS
+//go:embed ui/build/*
+var uiFS embed.FS
 
 // Config configures the admin panel.
 type Config struct {
@@ -52,16 +48,7 @@ type LogProvider interface {
 type Panel struct {
 	cfg  Config
 	tabs []Tab
-	tmpl *template.Template
 	mux  *http.ServeMux
-}
-
-// templateData is passed to the layout template.
-type templateData struct {
-	AppName          string
-	Tabs             []Tab
-	ActiveTab        string
-	AppleWebClientID string
 }
 
 // New creates a new admin panel.
@@ -74,62 +61,12 @@ func New(cfg Config) *Panel {
 	}
 
 	p := &Panel{cfg: cfg}
-
-	funcMap := template.FuncMap{
-		"timeAgo": func(t time.Time) string {
-			d := time.Since(t)
-			switch {
-			case d < time.Minute:
-				return "just now"
-			case d < time.Hour:
-				return formatDuration(int(d.Minutes()), "minute")
-			case d < 24*time.Hour:
-				return formatDuration(int(d.Hours()), "hour")
-			default:
-				return formatDuration(int(d.Hours()/24), "day")
-			}
-		},
-		"shortDate": func(t time.Time) string {
-			return t.Format("Jan 2")
-		},
-		"fullDate": func(t time.Time) string {
-			return t.Format("Jan 2, 2006 3:04 PM")
-		},
-		"lower": strings.ToLower,
-		"safeHTML": func(s string) template.HTML {
-			return template.HTML(s)
-		},
-	}
-
-	p.tmpl = template.Must(
-		template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html", "templates/partials/*.html"),
-	)
-
 	p.buildMux()
 	return p
 }
 
-func formatDuration(n int, unit string) string {
-	s := intToStr(n) + " " + unit
-	if n != 1 {
-		s += "s"
-	}
-	return s + " ago"
-}
-
-func intToStr(n int) string {
-	if n < 0 {
-		return "-" + intToStr(-n)
-	}
-	if n < 10 {
-		return string(rune('0' + n))
-	}
-	return intToStr(n/10) + string(rune('0'+n%10))
-}
-
 // Register adds or replaces a tab in the panel.
 func (p *Panel) Register(tab Tab) {
-	// Replace if tab with same ID already exists
 	for i, t := range p.tabs {
 		if t.ID == tab.ID {
 			p.tabs[i] = tab
@@ -150,21 +87,13 @@ func (p *Panel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (p *Panel) buildMux() {
 	mux := http.NewServeMux()
 
-	// Static assets (no auth)
-	staticSub, _ := fs.Sub(staticFS, "static")
-	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/", http.FileServerFS(staticSub)))
-
-	// Auth endpoints (no admin auth)
+	// Auth API (no admin auth required)
 	mux.HandleFunc("POST /admin/auth", p.handleAuth)
 	mux.HandleFunc("GET /admin/logout", p.handleLogout)
 
-	// Main page — serves login or layout
-	mux.HandleFunc("GET /admin/", p.handleIndex)
-	mux.HandleFunc("GET /admin/{tab}", p.handleIndex)
-
-	// Tab fragment endpoints (auth required)
+	// Tab API endpoints (auth required)
 	for _, tab := range p.tabs {
-		path := "GET /admin/tab/" + tab.ID
+		path := "GET /admin/api/tab/" + tab.ID
 		handler := tab.Handler
 		mux.Handle(path, p.requireAdmin(handler))
 
@@ -177,30 +106,35 @@ func (p *Panel) buildMux() {
 		}
 	}
 
-	p.mux = mux
-}
+	// Svelte SPA — serve static files from ui/build/, with SPA fallback
+	buildFS, _ := fs.Sub(uiFS, "ui/build")
+	fileServer := http.FileServer(http.FS(buildFS))
 
-// handleIndex serves the login page or dashboard layout.
-func (p *Panel) handleIndex(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	mux.HandleFunc("/admin/", func(w http.ResponseWriter, r *http.Request) {
+		// Strip /admin prefix to get the file path within build/
+		path := strings.TrimPrefix(r.URL.Path, "/admin")
+		if path == "" || path == "/" {
+			path = "/index.html"
+		}
 
-	if !p.isAuthenticated(r) {
-		p.tmpl.ExecuteTemplate(w, "login.html", templateData{
-			AppName:          p.cfg.AppName,
-			AppleWebClientID: p.cfg.AppleWebClientID,
-		})
-		return
-	}
+		// Try to serve the actual file first
+		if path != "/index.html" {
+			// Check if file exists in the embedded FS
+			f, err := fs.Stat(buildFS, strings.TrimPrefix(path, "/"))
+			if err == nil && !f.IsDir() {
+				// File exists — serve it with proper caching
+				if strings.Contains(path, "/immutable/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
+				http.StripPrefix("/admin", fileServer).ServeHTTP(w, r)
+				return
+			}
+		}
 
-	// Determine active tab from URL
-	activeTab := r.PathValue("tab")
-	if activeTab == "" && len(p.tabs) > 0 {
-		activeTab = p.tabs[0].ID
-	}
-
-	p.tmpl.ExecuteTemplate(w, "layout.html", templateData{
-		AppName:   p.cfg.AppName,
-		Tabs:      p.tabs,
-		ActiveTab: activeTab,
+		// SPA fallback — serve index.html for all routes
+		r.URL.Path = "/admin/index.html"
+		http.StripPrefix("/admin", fileServer).ServeHTTP(w, r)
 	})
+
+	p.mux = mux
 }

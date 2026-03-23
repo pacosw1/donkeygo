@@ -1,0 +1,1 @@
+import{a as i,f as o}from"./CyBGWl87.js";import{f as s,r as t}from"./BPXSoMn8.js";import{S as f}from"./DiIYoRBo.js";var m=o('<div class="flex h-64 items-center justify-center"><!></div>');function v(a){var r=m(),e=s(r);f(e,{size:"lg"}),t(r),i(a,r)}export{v as P};
