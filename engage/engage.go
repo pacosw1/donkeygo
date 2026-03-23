@@ -51,23 +51,41 @@ type EngagementData struct {
 	GoalsCompletedTotal int    `json:"goals_completed_total"`
 }
 
+// EventHook is called after events are successfully tracked.
+// Use it to trigger side effects (e.g. update streaks, check achievements).
+type EventHook func(userID string, events []EventInput)
+
 // Config holds engage configuration.
-type Config struct{}
+type Config struct {
+	// PaywallTrigger overrides the default paywall eligibility logic.
+	// If nil, DefaultPaywallTrigger is used.
+	PaywallTrigger func(data *EngagementData) string
+}
 
 // Service provides engagement tracking handlers.
 type Service struct {
-	cfg             Config
-	db              EngageDB
-	PaywallTrigger  func(data *EngagementData) string // custom paywall trigger logic
+	cfg            Config
+	db             EngageDB
+	PaywallTrigger func(data *EngagementData) string
+	eventHooks     []EventHook
 }
 
 // New creates an engage service.
 func New(cfg Config, db EngageDB) *Service {
+	trigger := cfg.PaywallTrigger
+	if trigger == nil {
+		trigger = DefaultPaywallTrigger
+	}
 	return &Service{
 		cfg:            cfg,
 		db:             db,
-		PaywallTrigger: DefaultPaywallTrigger,
+		PaywallTrigger: trigger,
 	}
+}
+
+// RegisterEventHook adds a callback invoked after events are tracked.
+func (s *Service) RegisterEventHook(hook EventHook) {
+	s.eventHooks = append(s.eventHooks, hook)
 }
 
 // Migrations returns the SQL migrations needed by the engage package.
@@ -171,6 +189,11 @@ func (s *Service) HandleTrackEvents(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.TrackEvents(userID, dbEvents); err != nil {
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to track events")
 		return
+	}
+
+	// Invoke event hooks
+	for _, hook := range s.eventHooks {
+		hook(userID, dbEvents)
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, map[string]any{"tracked": len(dbEvents)})

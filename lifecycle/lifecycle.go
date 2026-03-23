@@ -86,9 +86,20 @@ type LifecycleDB interface {
 
 // ── Config & Service ────────────────────────────────────────────────────────
 
+// StageRule defines a custom stage determination rule.
+// Evaluated before built-in rules. First match wins.
+type StageRule struct {
+	Name    string
+	Stage   Stage
+	Matches func(score, daysSinceActive, createdDaysAgo int, ahaReached, isPro bool) bool
+}
+
 // Config holds lifecycle configuration.
 type Config struct {
-	AhaMomentRules []AhaMomentRule
+	AhaMomentRules     []AhaMomentRule
+	CustomStages       []StageRule                                          // Evaluated before built-in rules
+	PromptBuilder      func(userID string, es *EngagementScore) (*Prompt, error) // Override default prompt logic
+	PromptCooldownDays int                                                  // Default: 3
 }
 
 // Service provides lifecycle tracking handlers.
@@ -144,7 +155,7 @@ func (s *Service) EvaluateUser(userID string) (*EngagementScore, error) {
 	}
 
 	score := calculateScore(recentSessions, ahaReached, isPro, daysSinceActive, totalSessions)
-	stage := determineStage(score, daysSinceActive, createdDaysAgo, ahaReached, isPro)
+	stage := s.determineStage(score, daysSinceActive, createdDaysAgo, ahaReached, isPro)
 
 	es := &EngagementScore{
 		UserID:          userID,
@@ -222,7 +233,14 @@ func calculateScore(recentSessions int, ahaReached, isPro bool, daysSinceActive,
 	return score
 }
 
-func determineStage(score, daysSinceActive, createdDaysAgo int, ahaReached, isPro bool) Stage {
+func (s *Service) determineStage(score, daysSinceActive, createdDaysAgo int, ahaReached, isPro bool) Stage {
+	// Check custom stage rules first
+	for _, rule := range s.cfg.CustomStages {
+		if rule.Matches(score, daysSinceActive, createdDaysAgo, ahaReached, isPro) {
+			return rule.Stage
+		}
+	}
+
 	switch {
 	case daysSinceActive >= 30:
 		return StageChurned
@@ -244,13 +262,25 @@ func determineStage(score, daysSinceActive, createdDaysAgo int, ahaReached, isPr
 }
 
 // DeterminePrompt checks cooldown and returns the appropriate prompt for the user's stage.
+// If Config.PromptBuilder is set, it is used instead of the built-in logic.
 func (s *Service) DeterminePrompt(userID string, es *EngagementScore) (*Prompt, error) {
-	// Check if user was prompted within last 3 days
+	// Configurable cooldown (default 3 days)
+	cooldownDays := s.cfg.PromptCooldownDays
+	if cooldownDays <= 0 {
+		cooldownDays = 3
+	}
+
+	// Check if user was prompted within cooldown period
 	_, promptAt, err := s.db.LastPrompt(userID)
 	if err == nil && !promptAt.IsZero() {
-		if time.Since(promptAt) < 3*24*time.Hour {
+		if time.Since(promptAt) < time.Duration(cooldownDays)*24*time.Hour {
 			return nil, nil
 		}
+	}
+
+	// Use custom prompt builder if configured
+	if s.cfg.PromptBuilder != nil {
+		return s.cfg.PromptBuilder(userID, es)
 	}
 
 	switch es.Stage {

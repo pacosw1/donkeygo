@@ -225,6 +225,8 @@ type EngageDB interface {
 type EventInput struct { Event, Metadata, Timestamp string }
 type UserSubscription struct { UserID, ProductID, Status string; ExpiresAt, StartedAt *time.Time; UpdatedAt time.Time }
 type EngagementData struct { DaysActive, TotalLogs, CurrentStreak, PaywallShownCount, GoalsCompletedTotal int; SubscriptionStatus, LastPaywallDate string }
+type EventHook func(userID string, events []EventInput)
+type Config struct { PaywallTrigger func(*EngagementData) string }
 type Service struct { PaywallTrigger func(*EngagementData) string }
 ```
 
@@ -234,6 +236,7 @@ type Service struct { PaywallTrigger func(*EngagementData) string }
 func New(cfg Config, db EngageDB) *Service
 func Migrations() []string
 func DefaultPaywallTrigger(data *EngagementData) string
+func (s *Service) RegisterEventHook(hook EventHook)  // callback after events tracked
 func (s *Service) HandleTrackEvents(w, r)
 func (s *Service) HandleUpdateSubscription(w, r)
 func (s *Service) HandleSessionReport(w, r)
@@ -491,9 +494,16 @@ type EngagementScore struct {
 }
 type LifecyclePrompt struct { Type, Title, Body, Reason string }
 
+type StageRule struct {
+    Name string; Stage Stage
+    Matches func(score, daysSinceActive, createdDaysAgo int, ahaReached, isPro bool) bool
+}
+
 type Config struct {
-    AhaMomentRules   []AhaMomentRule
-    PromptCooldownDays int  // default 3
+    AhaMomentRules     []AhaMomentRule
+    CustomStages       []StageRule     // evaluated before built-in rules, first match wins
+    PromptBuilder      func(userID string, es *EngagementScore) (*Prompt, error) // override prompt logic
+    PromptCooldownDays int             // default 3
 }
 ```
 
@@ -845,7 +855,9 @@ type LifecycleDBAdapter struct { *DB }
 | `*DB`                 | `sync.SyncDB`            |
 | `*DB`                 | `sync.DeviceTokenStore`  |
 | `*DB`                 | `receipt.ReceiptDB`      |
+| `*DB`                 | `account.AccountDB`      |
 | `*DB`                 | `admin.AdminDB`          |
+| `*DB`                 | `flags.FlagsDB`          |
 | `*DB`                 | `analytics.AnalyticsDB`  |
 | `*ChatDBAdapter`      | `chat.ChatDB`            |
 | `*LifecycleDBAdapter` | `lifecycle.LifecycleDB`  |
@@ -992,6 +1004,180 @@ panel.Register(admin.Tab{
 
 mux.Handle("/admin/", panel)
 ```
+
+---
+
+## health
+
+Liveness and readiness check endpoints for load balancers and orchestrators.
+
+### Functions
+
+```go
+func New(cfg Config) *Service
+func (s *Service) HandleHealth(w, r)  // GET /health — always 200, liveness probe
+func (s *Service) HandleReady(w, r)   // GET /ready — runs all checks, 200 or 503
+```
+
+### Types
+
+```go
+type Check struct { Name string; Fn func() error }
+type Config struct { Checks []Check }
+```
+
+### Usage
+
+```go
+healthSvc := health.New(health.Config{
+    Checks: []health.Check{
+        {Name: "db", Fn: func() error { return db.Ping() }},
+    },
+})
+mux.HandleFunc("GET /health", healthSvc.HandleHealth)
+mux.HandleFunc("GET /ready", healthSvc.HandleReady)
+```
+
+---
+
+## email
+
+Transactional email provider interface with SMTP, Log, and Noop implementations. Follows push.Provider pattern.
+
+### Interface
+
+```go
+type Provider interface {
+    Send(to, subject, textBody, htmlBody string) error
+}
+```
+
+### Types
+
+```go
+type SMTPConfig struct { Host string; Port int; Username, Password, From, FromName string }
+type Template struct { Subject, HTML, Text string }  // Go template strings
+type Renderer struct { /* ... */ }
+type LogProvider struct{}   // logs to stdout
+type NoopProvider struct{}  // silently discards
+type SMTPProvider struct{}  // real SMTP
+```
+
+### Functions
+
+```go
+func NewProvider(cfg SMTPConfig) (Provider, error)  // SMTP if Host set, Log otherwise
+func NewSMTPProvider(cfg SMTPConfig) (*SMTPProvider, error)
+func NewRenderer() *Renderer
+func (r *Renderer) Register(name string, tmpl Template)
+func (r *Renderer) Render(name string, data map[string]any) (subject, html, text string, err error)
+```
+
+### Usage
+
+```go
+provider, _ := email.NewProvider(email.SMTPConfig{Host: "smtp.gmail.com", Port: 587, From: "app@example.com"})
+provider.Send("user@example.com", "Welcome!", "Thanks for signing up.", "<h1>Welcome!</h1>")
+
+// With templates:
+renderer := email.NewRenderer()
+renderer.Register("welcome", email.Template{
+    Subject: "Welcome to {{.AppName}}",
+    HTML:    "<h1>Hi {{.Name}}</h1>",
+    Text:    "Hi {{.Name}}, welcome!",
+})
+subj, html, text, _ := renderer.Render("welcome", map[string]any{"AppName": "MyApp", "Name": "Paco"})
+provider.Send("user@example.com", subj, text, html)
+```
+
+---
+
+## flags
+
+Feature flags with user targeting and percentage rollouts. Stored in DB, no external service dependency.
+
+### DB Interface
+
+```go
+type FlagsDB interface {
+    UpsertFlag(f *Flag) error
+    GetFlag(key string) (*Flag, error)
+    ListFlags() ([]*Flag, error)
+    DeleteFlag(key string) error
+    GetUserOverride(key, userID string) (*bool, error)
+    SetUserOverride(key, userID string, enabled bool) error
+    DeleteUserOverride(key, userID string) error
+}
+```
+
+### Types
+
+```go
+type Flag struct { Key string; Enabled bool; RolloutPct int; Description string; CreatedAt, UpdatedAt time.Time }
+```
+
+### Functions
+
+```go
+func New(cfg Config, db FlagsDB) *Service
+func Migrations() []string
+func (s *Service) IsEnabled(key, userID string) (bool, error)  // override > rollout % > default
+func (s *Service) HandleCheck(w, r)        // GET /api/v1/flags/{key}
+func (s *Service) HandleBatchCheck(w, r)   // POST /api/v1/flags/check
+func (s *Service) HandleAdminList(w, r)    // GET /admin/api/flags
+func (s *Service) HandleAdminCreate(w, r)  // POST /admin/api/flags
+func (s *Service) HandleAdminUpdate(w, r)  // PUT /admin/api/flags/{key}
+func (s *Service) HandleAdminDelete(w, r)  // DELETE /admin/api/flags/{key}
+```
+
+### Rollout Logic
+
+1. Check user-specific override → if found, return it
+2. Check flag enabled → if disabled, return false
+3. Hash `key:userID` deterministically → compare against `rollout_pct`
+
+---
+
+## account
+
+GDPR-compliant account deletion, anonymization, and data export. Cascades across all donkeygo tables.
+
+### DB Interface
+
+```go
+type AccountDB interface {
+    GetUserEmail(userID string) (string, error)
+    DeleteUserData(userID string) error   // all donkeygo tables except users
+    DeleteUser(userID string) error       // users table
+    AnonymizeUser(userID string) error    // replace PII, keep analytics
+    ExportUserData(userID string) (*UserDataExport, error)
+}
+```
+
+### Types
+
+```go
+type Config struct { OnDelete func(userID, email string) }
+type AppCleanup interface { DeleteAppData(userID string) error }
+type AppExporter interface { ExportAppData(userID string) (any, error) }
+type UserDataExport struct { User, Subscription, Events, Sessions, Feedback, ChatMessages, DeviceTokens, Preferences, Transactions, AppData any }
+```
+
+### Functions
+
+```go
+func New(cfg Config, db AccountDB, opts ...any) *Service  // opts: AppCleanup, AppExporter
+func (s *Service) HandleDeleteAccount(w, r)     // DELETE /api/v1/account
+func (s *Service) HandleAnonymizeAccount(w, r)  // POST /api/v1/account/anonymize
+func (s *Service) HandleExportData(w, r)        // GET /api/v1/account/export
+```
+
+### Deletion Order
+
+1. `AppCleanup.DeleteAppData()` — app tables first (may FK to users)
+2. `AccountDB.DeleteUserData()` — all donkeygo tables
+3. `AccountDB.DeleteUser()` — users table last
+4. `Config.OnDelete()` callback (e.g. send confirmation email)
 
 ---
 

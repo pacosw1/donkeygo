@@ -87,6 +87,8 @@ func TestCalculateScore(t *testing.T) {
 // ── Stage Tests ─────────────────────────────────────────────────────────────
 
 func TestDetermineStage(t *testing.T) {
+	svc := New(Config{}, &mockDB{}, &push.NoopProvider{})
+
 	tests := []struct {
 		name            string
 		score           int
@@ -112,7 +114,7 @@ func TestDetermineStage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := determineStage(tt.score, tt.daysSinceActive, tt.createdDaysAgo, tt.ahaReached, tt.isPro)
+			got := svc.determineStage(tt.score, tt.daysSinceActive, tt.createdDaysAgo, tt.ahaReached, tt.isPro)
 			if got != tt.want {
 				t.Errorf("determineStage() = %s, want %s", got, tt.want)
 			}
