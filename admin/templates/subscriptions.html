@@ -1,0 +1,25 @@
+{{define "subscriptions.html"}}
+<div class="cards">
+  {{range .Cards}}
+  {{template "stat_card.html" .}}
+  {{end}}
+</div>
+
+<div class="section-title">Breakdown by Status</div>
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Count</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Breakdown}}
+    <tr>
+      <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+      <td>{{.Count}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}

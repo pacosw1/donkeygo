@@ -845,6 +845,7 @@ type LifecycleDBAdapter struct { *DB }
 | `*DB`                 | `sync.SyncDB`            |
 | `*DB`                 | `sync.DeviceTokenStore`  |
 | `*DB`                 | `receipt.ReceiptDB`      |
+| `*DB`                 | `admin.AdminDB`          |
 | `*DB`                 | `analytics.AnalyticsDB`  |
 | `*ChatDBAdapter`      | `chat.ChatDB`            |
 | `*LifecycleDBAdapter` | `lifecycle.LifecycleDB`  |
@@ -869,6 +870,127 @@ engageSvc  := engage.New(engage.Config{}, store)
 notifySvc  := notify.New(store, pushSvc)
 chatSvc    := chat.New(&postgres.ChatDBAdapter{store}, pushSvc, chatCfg)
 lifecycleSvc := lifecycle.New(lcCfg, &postgres.LifecycleDBAdapter{store}, pushSvc)
+```
+
+---
+
+## admin
+
+Pre-built, extensible admin panel using html/template + HTMX. Dark theme, single binary, zero JS build step. Ships built-in tabs for all donkeygo packages with extension points for app-specific data.
+
+### DB Interface
+
+```go
+type AdminDB interface {
+    AdminListUsers(search string, limit, offset int) ([]AdminUser, int, error)
+    AdminGetUser(userID string) (*AdminUserDetail, error)
+    AdminListEvents(eventType, userID string, since time.Time, limit int) ([]AdminEvent, error)
+    AdminListNotifications(limit int) ([]AdminNotification, error)
+    AdminSubscriptionBreakdown() ([]SubBreakdownRow, error)
+    AdminListFeedback(limit int) ([]AdminFeedback, error)
+}
+```
+
+### Types
+
+```go
+type Config struct {
+    JWTSecret        string
+    SessionExpiry    time.Duration    // default 7 days
+    AllowedEmails    []string         // email whitelist
+    AdminKey         string           // optional API key
+    Production       bool             // secure cookies
+    VerifyToken      func(idToken string) (sub, email string, err error)
+    AppleWebClientID string
+    AppName          string           // default "Admin"
+}
+
+type Tab struct { ID, Label, Icon string; Handler http.Handler; Order int }
+type Column struct { Header string; Value func(row any) string }
+type Section struct { Title string; Handler http.Handler }
+type Card struct { Label string; Value func() string; Color string }
+
+type ChatProvider interface {
+    HandleAdminListChats(w, r)
+    HandleAdminGetChat(w, r)
+    HandleAdminReplyChat(w, r)
+    HandleAdminWS(w, r)
+}
+
+type LogProvider interface { Lines(n int) []string }
+```
+
+### Built-in Tab Constructors
+
+```go
+func OverviewTab(db analytics.AnalyticsDB, cfg ...OverviewConfig) Tab
+func UsersTab(db AdminDB, cfg ...UsersConfig) Tab
+func EventsTab(db AdminDB, cfg ...EventsConfig) Tab
+func SubscriptionsTab(analyticsDB analytics.AnalyticsDB, adminDB AdminDB, cfg ...SubscriptionsConfig) Tab
+func NotificationsTab(db AdminDB, cfg ...NotificationsConfig) Tab
+func FeedbackTab(db AdminDB, cfg ...FeedbackConfig) Tab
+func ChatTab(chatSvc ChatProvider) Tab
+func LogsTab(buf LogProvider) Tab
+```
+
+### Extension Configs
+
+```go
+type OverviewConfig struct { ExtraCards []Card }
+type UsersConfig struct { ExtraColumns []Column; ExtraSections []Section }
+type EventsConfig struct { EventTypes []string; ExtraColumns []Column }
+type SubscriptionsConfig struct { ExtraCards []Card }
+type NotificationsConfig struct { ExtraColumns []Column }
+type FeedbackConfig struct { ExtraColumns []Column }
+```
+
+### Functions
+
+```go
+func New(cfg Config) *Panel
+func (p *Panel) Register(tab Tab)
+func (p *Panel) ServeHTTP(w, r)  // implements http.Handler — mount at /admin/
+```
+
+### Usage
+
+```go
+panel := admin.New(admin.Config{
+    JWTSecret:        "secret",
+    AllowedEmails:    []string{"admin@example.com"},
+    VerifyToken:      authSvc.VerifyAppleIDToken,
+    AppleWebClientID: "com.app.web",
+    AppName:          "My App Admin",
+    Production:       true,
+})
+
+// Built-in tabs (each optional)
+panel.Register(admin.OverviewTab(analyticsSvc.DB()))
+panel.Register(admin.UsersTab(adminDB, admin.UsersConfig{
+    ExtraColumns: []admin.Column{
+        {Header: "Streak", Value: func(row any) string {
+            u := row.(admin.AdminUser)
+            streak, _ := myDB.GetStreak(u.ID)
+            return strconv.Itoa(streak)
+        }},
+    },
+}))
+panel.Register(admin.EventsTab(adminDB, admin.EventsConfig{
+    EventTypes: []string{"water_logged", "habit_completed"},
+}))
+panel.Register(admin.SubscriptionsTab(analyticsSvc.DB(), adminDB))
+panel.Register(admin.NotificationsTab(adminDB))
+panel.Register(admin.FeedbackTab(adminDB))
+panel.Register(admin.ChatTab(chatSvc))
+panel.Register(admin.LogsTab(logBuf))
+
+// Custom app-specific tab
+panel.Register(admin.Tab{
+    ID: "inventory", Label: "Inventory", Icon: "package", Order: 90,
+    Handler: http.HandlerFunc(myInventoryHandler),
+})
+
+mux.Handle("/admin/", panel)
 ```
 
 ---

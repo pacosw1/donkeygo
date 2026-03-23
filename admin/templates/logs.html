@@ -1,0 +1,19 @@
+{{define "logs.html"}}
+<div hx-get="/admin/tab/logs" hx-trigger="every 5s" hx-swap="innerHTML">
+<div class="toolbar">
+  <input type="text" name="filter" placeholder="Filter logs..."
+         hx-get="/admin/tab/logs"
+         hx-target="#content"
+         hx-trigger="keyup changed delay:300ms"
+         hx-include="this"
+         value="{{.Filter}}">
+  <span class="auto-refresh">{{.Count}} lines &middot; auto-refresh 5s</span>
+</div>
+
+<div class="log-viewer">
+  {{range .Lines}}
+  <div class="log-line">{{.}}</div>
+  {{end}}
+</div>
+</div>
+{{end}}

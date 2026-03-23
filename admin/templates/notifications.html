@@ -1,0 +1,27 @@
+{{define "notifications.html"}}
+<table>
+  <thead>
+    <tr>
+      <th>User</th>
+      <th>Kind</th>
+      <th>Title</th>
+      <th>Body</th>
+      <th>Status</th>
+      <th>Sent</th>
+      {{range .ExtraHeaders}}<th>{{.}}</th>{{end}}
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Notifications}}
+    <tr>
+      <td>{{.UserID}}</td>
+      <td><span class="badge badge-feature">{{.Kind}}</span></td>
+      <td>{{.Title}}</td>
+      <td>{{.Body}}</td>
+      <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+      <td>{{timeAgo .SentAt}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}

@@ -1,0 +1,91 @@
+{{define "chat.html"}}
+<div class="chat-container" id="chat-container">
+  <div class="chat-threads" id="chat-threads">
+    <div class="chat-empty">Loading threads...</div>
+  </div>
+  <div class="chat-main">
+    <div class="chat-user-header" id="chat-header">
+      <span class="user-name">Select a conversation</span>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-empty">Select a thread to start chatting</div>
+    </div>
+    <div class="chat-reply" id="chat-reply" style="display:none">
+      <input type="text" id="chat-input" placeholder="Type a reply..."
+             onkeydown="if(event.key==='Enter')sendReply()">
+      <button onclick="sendReply()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentChatUser = null;
+let chatWS = null;
+
+async function loadThreads() {
+  try {
+    const res = await fetch('/admin/api/chats');
+    if (!res.ok) return;
+    const data = await res.json();
+    const container = document.getElementById('chat-threads');
+    if (!data.threads || data.threads.length === 0) {
+      container.innerHTML = '<div class="chat-empty">No conversations yet</div>';
+      return;
+    }
+    container.innerHTML = data.threads.map(t => `
+      <div class="chat-thread ${t.user_id === currentChatUser ? 'active' : ''}"
+           onclick="openThread('${t.user_id}')">
+        <div class="thread-name">
+          ${t.user_name || 'Unknown'}
+          ${t.unread_count > 0 ? `<span class="unread-badge">${t.unread_count}</span>` : ''}
+        </div>
+        <div class="thread-email">${t.user_email || ''}</div>
+        <div class="thread-preview">${t.last_message || ''}</div>
+      </div>
+    `).join('');
+  } catch(e) { console.error('loadThreads:', e); }
+}
+
+async function openThread(userID) {
+  currentChatUser = userID;
+  document.getElementById('chat-reply').style.display = 'flex';
+  try {
+    const res = await fetch(`/admin/api/chats/${userID}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const container = document.getElementById('chat-messages');
+    if (!data.messages || data.messages.length === 0) {
+      container.innerHTML = '<div class="chat-empty">No messages</div>';
+      return;
+    }
+    container.innerHTML = data.messages.map(m => `
+      <div class="chat-bubble ${m.sender === 'admin' ? 'admin' : 'user'}">
+        ${m.message}
+        <div class="bubble-time">${new Date(m.created_at).toLocaleString()}</div>
+      </div>
+    `).join('');
+    container.scrollTop = container.scrollHeight;
+  } catch(e) { console.error('openThread:', e); }
+  loadThreads();
+}
+
+async function sendReply() {
+  if (!currentChatUser) return;
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  try {
+    await fetch(`/admin/api/chats/${currentChatUser}/reply`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg})
+    });
+    openThread(currentChatUser);
+  } catch(e) { console.error('sendReply:', e); }
+}
+
+loadThreads();
+setInterval(loadThreads, 10000);
+</script>
+{{end}}

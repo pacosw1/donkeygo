@@ -1,0 +1,25 @@
+{{define "feedback.html"}}
+<table>
+  <thead>
+    <tr>
+      <th>User</th>
+      <th>Type</th>
+      <th>Message</th>
+      <th>App Version</th>
+      <th>Date</th>
+      {{range .ExtraHeaders}}<th>{{.}}</th>{{end}}
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Feedback}}
+    <tr>
+      <td>{{.UserEmail}}</td>
+      <td><span class="badge badge-{{.Type}}">{{.Type}}</span></td>
+      <td>{{.Message}}</td>
+      <td>{{.AppVersion}}</td>
+      <td>{{timeAgo .CreatedAt}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}

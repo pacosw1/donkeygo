@@ -1,0 +1,42 @@
+{{define "events.html"}}
+<div class="toolbar">
+  <select name="event"
+          hx-get="/admin/tab/events"
+          hx-target="#content"
+          hx-trigger="change"
+          hx-include="[name='user_id']">
+    <option value="">All Events</option>
+    {{range .EventTypes}}
+    <option value="{{.}}" {{if eq . $.EventType}}selected{{end}}>{{.}}</option>
+    {{end}}
+  </select>
+  <input type="text" name="user_id" placeholder="Filter by User ID..."
+         hx-get="/admin/tab/events"
+         hx-target="#content"
+         hx-trigger="keyup changed delay:300ms"
+         hx-include="[name='event']"
+         value="{{.UserID}}">
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Event</th>
+      <th>User</th>
+      <th>Metadata</th>
+      <th>Time</th>
+      {{range .ExtraHeaders}}<th>{{.}}</th>{{end}}
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Events}}
+    <tr>
+      <td><span class="badge badge-feature">{{.Event}}</span></td>
+      <td>{{.UserEmail}}</td>
+      <td>{{.Metadata}}</td>
+      <td>{{timeAgo .CreatedAt}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}

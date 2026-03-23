@@ -1,0 +1,22 @@
+{{define "overview.html"}}
+<div hx-get="/admin/tab/overview" hx-trigger="every 30s" hx-swap="innerHTML">
+<div class="cards">
+  {{range .Cards}}
+  {{template "stat_card.html" .}}
+  {{end}}
+</div>
+
+{{if .DAU}}
+<div class="section-title">DAU (30 days)</div>
+<div class="bar-chart">
+  {{range .DAU}}
+  <div class="bar-col">
+    <div class="bar" style="height:{{.HeightPct}}%"></div>
+    <div class="bar-val">{{.DAU}}</div>
+    <div class="bar-label">{{.Date}}</div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+</div>
+{{end}}

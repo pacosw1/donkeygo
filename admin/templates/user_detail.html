@@ -1,0 +1,46 @@
+{{define "user_detail.html"}}
+<div>
+  <button hx-get="/admin/tab/users" hx-target="#content" class="back-btn">&larr; Back to Users</button>
+
+  <div class="section-title">Profile</div>
+  <div class="detail-grid">
+    <div><span class="d-label">ID</span><br><span class="d-value">{{.User.ID}}</span></div>
+    <div><span class="d-label">Email</span><br><span class="d-value">{{.User.Email}}</span></div>
+    <div><span class="d-label">Name</span><br><span class="d-value">{{.User.Name}}</span></div>
+    <div><span class="d-label">Status</span><br><span class="badge badge-{{.User.Status}}">{{.User.Status}}</span></div>
+    <div><span class="d-label">Created</span><br><span class="d-value">{{fullDate .User.CreatedAt}}</span></div>
+    <div><span class="d-label">Last Login</span><br><span class="d-value">{{fullDate .User.LastLoginAt}}</span></div>
+  </div>
+
+  <div class="cards" style="margin-top:16px">
+    <div class="card">
+      <div class="label">Events</div>
+      <div class="value">{{.User.EventCount}}</div>
+    </div>
+    <div class="card">
+      <div class="label">Sessions</div>
+      <div class="value">{{.User.SessionCount}}</div>
+    </div>
+    <div class="card">
+      <div class="label">Devices</div>
+      <div class="value">{{.User.DeviceCount}}</div>
+    </div>
+  </div>
+
+  {{if .User.Subscription}}
+  <div class="section-title">Subscription</div>
+  <div class="detail-grid">
+    <div><span class="d-label">Product</span><br><span class="d-value">{{.User.Subscription.ProductID}}</span></div>
+    <div><span class="d-label">Status</span><br><span class="badge badge-{{.User.Subscription.Status}}">{{.User.Subscription.Status}}</span></div>
+    {{if .User.Subscription.ExpiresAt}}
+    <div><span class="d-label">Expires</span><br><span class="d-value">{{fullDate .User.Subscription.ExpiresAt}}</span></div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{range .ExtraSections}}
+  <div class="section-title">{{.Title}}</div>
+  <div>{{safeHTML .HTML}}</div>
+  {{end}}
+</div>
+{{end}}

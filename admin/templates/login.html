@@ -1,0 +1,55 @@
+{{define "login.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.AppName}} — Sign In</title>
+<link rel="stylesheet" href="/admin/static/style.css">
+{{if .AppleWebClientID}}
+<meta name="appleid-signin-client-id" content="{{.AppleWebClientID}}">
+<meta name="appleid-signin-scope" content="email">
+<meta name="appleid-signin-redirect-uri" content="">
+<meta name="appleid-signin-use-popup" content="true">
+<script type="text/javascript" src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js"></script>
+{{end}}
+</head>
+<body>
+<div class="login-container">
+  <h1>{{.AppName}}</h1>
+  <p class="login-subtitle">Admin Panel</p>
+
+  {{if .AppleWebClientID}}
+  <div id="appleid-signin" data-color="white" data-border="false" data-type="sign-in"
+       data-border-radius="8" data-width="280" data-height="44"
+       style="margin:24px auto;cursor:pointer"></div>
+  <div id="login-error" class="login-error"></div>
+
+  <script>
+  document.addEventListener('AppleIDSignInOnSuccess', async (e) => {
+    const token = e.detail.authorization.id_token;
+    try {
+      const res = await fetch('/admin/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id_token: token})
+      });
+      if (res.ok) {
+        window.location.reload();
+      } else {
+        const data = await res.json();
+        document.getElementById('login-error').textContent = data.error || 'Access denied';
+      }
+    } catch (err) {
+      document.getElementById('login-error').textContent = 'Network error';
+    }
+  });
+  document.addEventListener('AppleIDSignInOnFailure', (e) => {
+    document.getElementById('login-error').textContent = 'Sign in cancelled';
+  });
+  </script>
+  {{else}}
+  <p class="login-subtitle">Contact administrator for access.</p>
+  {{end}}
+</div>
+</body>
+</html>{{end}}

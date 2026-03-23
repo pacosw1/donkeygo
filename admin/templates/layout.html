@@ -1,0 +1,31 @@
+{{define "layout.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.AppName}}</title>
+<link rel="stylesheet" href="/admin/static/style.css">
+<script src="/admin/static/htmx.min.js"></script>
+</head>
+<body>
+<div class="header">
+  <h1>{{.AppName}}</h1>
+  <a href="/admin/logout" class="sign-out">Sign Out</a>
+</div>
+<div class="tabs" id="tabs">
+  {{range .Tabs}}
+  <button class="tab-btn{{if eq .ID $.ActiveTab}} active{{end}}"
+          hx-get="/admin/tab/{{.ID}}"
+          hx-target="#content"
+          hx-swap="innerHTML"
+          hx-push-url="/admin/{{.ID}}"
+          onclick="document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active')">
+    {{.Label}}
+  </button>
+  {{end}}
+</div>
+<div id="content" class="content">
+  <div hx-get="/admin/tab/{{.ActiveTab}}" hx-trigger="load" hx-swap="innerHTML"></div>
+</div>
+</body>
+</html>{{end}}
