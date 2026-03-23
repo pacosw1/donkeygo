@@ -3,6 +3,7 @@ package admin
 import (
 	"embed"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"sort"
 	"strings"
@@ -150,7 +151,8 @@ func (p *Panel) buildMux() {
 	mux := http.NewServeMux()
 
 	// Static assets (no auth)
-	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/", http.FileServerFS(staticFS)))
+	staticSub, _ := fs.Sub(staticFS, "static")
+	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/", http.FileServerFS(staticSub)))
 
 	// Auth endpoints (no admin auth)
 	mux.HandleFunc("POST /admin/auth", p.handleAuth)
